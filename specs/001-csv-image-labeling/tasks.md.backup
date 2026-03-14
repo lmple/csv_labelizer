@@ -1,0 +1,322 @@
+# Tasks: CSV Image Labeling Application
+
+**Input**: Design documents from `/specs/001-csv-image-labeling/`
+**Prerequisites**: plan.md, spec.md
+
+**Tests**: No explicit test requirements in specification - tests marked as optional
+
+**Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel (different files, no dependencies)
+- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
+- Include exact file paths in descriptions
+
+## Path Conventions
+
+This is a Tauri desktop application with:
+- **Backend**: `src-tauri/src/` (Rust)
+- **Frontend**: `src/` (TypeScript, HTML, CSS)
+- **Tests**: `tests/` for Rust unit tests, `tests/frontend/` for frontend tests
+
+---
+
+## Phase 1: Setup (Shared Infrastructure)
+
+**Purpose**: Project initialization and basic structure
+
+- [x] T001 Create Tauri v2 project structure with Rust backend and TypeScript frontend
+- [x] T002 Initialize Cargo.toml with dependencies: tauri, tauri-plugin-dialog, tauri-plugin-fs, csv, serde, serde_json
+- [x] T003 [P] Initialize package.json with dependencies: @tauri-apps/api, @tauri-apps/plugin-dialog, typescript, vite, vitest
+- [x] T004 [P] Configure Rust linting (clippy) and formatting (rustfmt) in .cargo/config.toml
+- [ ] T005 [P] Configure TypeScript linting (eslint) and formatting (prettier) in frontend
+- [x] T006 Create directory structure: src-tauri/src/, src/, tests/, tests/frontend/
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
+
+**⚠️ CRITICAL**: No user story work can begin until this phase is complete
+
+- [x] T007 [P] Create CsvState struct in src-tauri/src/state.rs with fields: file_path, csv_dir, headers, offsets, row_count, delimiter, has_unsaved_changes
+- [x] T008 [P] Implement CSV offset indexing algorithm in src-tauri/src/csv_engine.rs (build Vec<u64> mapping row number to byte offset)
+- [x] T009 [P] Implement delimiter auto-detection in src-tauri/src/csv_engine.rs (analyze first 5 lines for comma, semicolon, tab consistency)
+- [x] T010 [P] Implement single row reader by offset in src-tauri/src/csv_engine.rs (seek to offset, read until newline, parse CSV fields)
+- [x] T011 [P] Implement in-place row writer in src-tauri/src/csv_engine.rs (handle same-length overwrite and different-length tail-shift strategy)
+- [x] T012 Configure Tauri state management in src-tauri/src/main.rs with Mutex<CsvState>
+- [x] T013 Setup asset protocol configuration in src-tauri/tauri.conf.json for local image serving via convertFileSrc
+- [x] T014 [P] Create TypeScript type definitions in src/types.ts: CsvMetadata interface (headers, row_count, csv_dir, delimiter) and RowData interface (fields, row_index)
+- [x] T015 [P] Write unit test for offset indexing in tests/csv_engine_test.rs verifying offsets match actual line starts
+- [x] T016 [P] Write unit test for delimiter auto-detection in tests/csv_engine_test.rs verifying correct detection for comma, semicolon, tab
+- [x] T017 [P] Write unit test for single row read in tests/csv_engine_test.rs verifying correct field parsing at any offset
+- [x] T018 [P] Write unit test for in-place write (same length) in tests/csv_engine_test.rs
+- [x] T019 [P] Write unit test for in-place write (different length) in tests/csv_engine_test.rs verifying tail-shift strategy
+- [x] T020 [P] Write unit test for quoted CSV fields in tests/csv_engine_test.rs (fields with commas, newlines, quotes)
+- [x] T021 [P] Write unit test for UTF-8 content preservation in tests/csv_engine_test.rs
+
+**Checkpoint**: Foundation ready - CSV engine tested and working, Tauri app scaffold complete, user story implementation can now begin
+
+---
+
+## Phase 3: User Story 1 - Load CSV and View Image Labels (Priority: P1) 🎯 MVP
+
+**Goal**: Enable users to open a CSV file, view the first row's data with column labels, and display the associated image
+
+**Independent Test**: Open a CSV file with headers and IMG_PATH column, verify first row displays with correct image loaded from relative path
+
+### Implementation for User Story 1
+
+- [x] T022 [P] [US1] Implement open_csv Tauri command in src-tauri/src/commands.rs: accept file path, build offset index, detect delimiter, extract headers, return CsvMetadata
+- [x] T023 [P] [US1] Implement get_row Tauri command in src-tauri/src/commands.rs: accept row index, seek to offset, parse fields, return RowData
+- [x] T024 [P] [US1] Implement get_csv_stats Tauri command in src-tauri/src/commands.rs returning current CsvMetadata from state
+- [x] T025 [US1] Register all Tauri commands in src-tauri/src/main.rs: open_csv, get_row, get_csv_stats
+- [x] T026 [P] [US1] Create file dialog integration in src/main.ts using @tauri-apps/plugin-dialog to open CSV file
+- [x] T027 [P] [US1] Create row editor form component in src/editor.ts: dynamically generate form inputs from headers, populate with field values
+- [x] T028 [P] [US1] Create image preview component in src/image-preview.ts: detect IMG_PATH column (case-insensitive), use convertFileSrc to create asset URL, display image with loading state
+- [x] T029 [P] [US1] Create HTML layout in src/index.html with two-column layout: image preview area (left) and row editor form (right)
+- [x] T030 [P] [US1] Create CSS styling in src/style.css for responsive layout with image preview and form side-by-side
+- [x] T031 [US1] Implement CSV open workflow in src/main.ts: file dialog → open_csv command → render form with first row → load image
+- [x] T032 [US1] Add error handling for missing images: display placeholder with expected path when IMG_PATH points to non-existent file
+- [x] T033 [US1] Add error handling for CSV parsing errors: display user-friendly message with retry option
+- [x] T034 [US1] Add status bar in src/index.html displaying current file path, row count, and detected delimiter
+
+**Checkpoint**: At this point, User Story 1 should be fully functional - users can open CSV, view first row with image
+
+---
+
+## Phase 4: User Story 2 - Toggle Class Values (Priority: P2)
+
+**Goal**: Enable users to quickly change class labels by toggling between existing values without typing
+
+**Independent Test**: Open a CSV with class columns (name contains "CLASS"), verify toggle controls appear, verify clicking cycles through all unique values for that column
+
+### Implementation for User Story 2
+
+- [ ] T035 [P] [US2] Implement class column detection in src-tauri/src/csv_engine.rs: identify columns with "CLASS" in name (case-insensitive), store indices in CsvState
+- [ ] T036 [P] [US2] Implement unique value extraction in src-tauri/src/csv_engine.rs: scan entire column to collect unique values, return as Vec<String>
+- [ ] T037 [P] [US2] Implement get_class_columns Tauri command in src-tauri/src/commands.rs returning Map<column_index, Vec<unique_values>>
+- [ ] T038 [US2] Register get_class_columns command in src-tauri/src/main.rs
+- [ ] T039 [P] [US2] Create toggle UI component in src/editor.ts: replace text input with toggle button for class columns, display current value with click-to-cycle behavior
+- [ ] T040 [P] [US2] Implement class value cycling logic in src/editor.ts: on click, find next value in unique values list, wrap to first when reaching end
+- [ ] T041 [US2] Integrate class column detection into row editor form generation in src/editor.ts: check if column is class column, render toggle component instead of text input
+- [ ] T042 [US2] Add visual distinction for class columns in src/style.css: different background color or icon to indicate toggleable field
+- [ ] T043 [US2] Implement unsaved changes tracking in src/editor.ts: set flag when any field changes, prompt user before navigation
+- [ ] T044 [US2] Add save/discard prompt dialog when navigating away from modified row in src/editor.ts
+
+**Checkpoint**: At this point, User Stories 1 AND 2 should both work - users can toggle class values efficiently
+
+---
+
+## Phase 5: User Story 3 - Add New Class Values (Priority: P3)
+
+**Goal**: Enable users to add new class values that don't exist in the predefined list
+
+**Independent Test**: Add a new class value to a class column, verify it appears in toggle options for future rows
+
+### Implementation for User Story 3
+
+- [ ] T045 [P] [US3] Implement add_class_value Tauri command in src-tauri/src/commands.rs: accept column_index and new_value, update unique values list in CsvState, return success
+- [ ] T046 [US3] Register add_class_value command in src-tauri/src/main.rs
+- [ ] T047 [P] [US3] Create "Add New Class" UI in src/editor.ts: add button next to class toggle control that opens input dialog
+- [ ] T048 [P] [US3] Implement input validation in src/editor.ts: sanitize special characters, check for empty/whitespace-only values, prevent duplicates
+- [ ] T049 [US3] Integrate add new class workflow in src/editor.ts: user clicks add button → input dialog → validation → add_class_value command → update UI with new option
+- [ ] T050 [US3] Add visual feedback in src/editor.ts: toast notification when new class value added successfully
+- [ ] T051 [US3] Update toggle component in src/editor.ts to refresh options list after new class value added
+
+**Checkpoint**: Users can now extend class value lists dynamically while annotating
+
+---
+
+## Phase 6: User Story 4 - Edit Non-Class Text Fields (Priority: P4)
+
+**Goal**: Enable users to edit text in non-class columns (notes, descriptions, metadata)
+
+**Independent Test**: Edit a non-class text column, save changes, verify CSV file updated correctly
+
+### Implementation for User Story 4
+
+- [ ] T052 [P] [US4] Implement save_row Tauri command in src-tauri/src/commands.rs: accept row_index and fields Vec<String>, write row using csv_engine, update offsets, return success/error
+- [ ] T053 [US4] Register save_row command in src-tauri/src/main.rs
+- [ ] T054 [P] [US4] Create text input components in src/editor.ts for non-class columns: free-form text input with proper handling of empty values
+- [ ] T055 [P] [US4] Implement save button in src/index.html with keyboard shortcut (Ctrl+S)
+- [ ] T056 [US4] Implement save workflow in src/editor.ts: collect all field values (class and text), call save_row command, handle success/error, clear unsaved changes flag
+- [ ] T057 [US4] Add retry logic in src/editor.ts for save failures: detect permission errors, disk space errors, file modification conflicts
+- [ ] T058 [US4] Add "Save As" option in src/editor.ts when save fails due to permissions: allow user to save to different location
+- [ ] T059 [US4] Implement undo/redo for current row in src/editor.ts: store field history, Ctrl+Z/Ctrl+Y shortcuts, only active before save
+- [ ] T060 [US4] Add visual indication of unsaved changes in src/editor.ts: asterisk in title bar, highlighted save button
+
+**Checkpoint**: Users can now edit both class and non-class fields with robust save functionality
+
+---
+
+## Phase 7: User Story 5 - Navigate Large Datasets Efficiently (Priority: P5)
+
+**Goal**: Enable navigation through large datasets (100,000+ rows) without performance degradation
+
+**Independent Test**: Load CSV with 50,000+ rows, verify navigation to any row completes within 2 seconds, memory stays below 500MB
+
+### Implementation for User Story 5
+
+- [ ] T061 [P] [US5] Create navigation controls in src/index.html: Previous button, Next button, row counter display (current/total), jump-to-row input
+- [ ] T062 [P] [US5] Implement navigation logic in src/navigation.ts: next/previous row with boundary checks (0 to row_count-1), jump to specific row with validation
+- [ ] T063 [P] [US5] Implement keyboard shortcuts in src/navigation.ts: arrow keys for prev/next, Enter on jump input
+- [ ] T064 [US5] Integrate navigation with save prompt in src/navigation.ts: check unsaved changes before navigation, prompt save/discard/cancel
+- [ ] T065 [US5] Add loading indicators in src/navigation.ts: show spinner during row load and image load, disable navigation during loading
+- [ ] T066 [US5] Optimize image loading in src/image-preview.ts: lazy load images asynchronously, cancel pending loads on navigation, skip very large images (>50MB) with user option
+- [ ] T067 [P] [US5] Implement memory profiling in src-tauri/src/csv_engine.rs: verify offset index stays within memory budget (8 bytes per row)
+- [ ] T068 [P] [US5] Optimize large file handling in src-tauri/src/csv_engine.rs: use streaming for tail buffer when rewriting rows in files >500MB
+- [ ] T069 [US5] Add performance metrics logging in src-tauri/src/commands.rs: track time for open_csv, get_row, save_row operations
+- [ ] T070 [US5] Create integration test in tests/frontend/navigation.test.ts: verify navigation boundaries, jump-to validation, keyboard shortcuts
+
+**Checkpoint**: Application now handles large datasets efficiently meeting performance targets
+
+---
+
+## Phase 8: Polish & Cross-Cutting Concerns
+
+**Purpose**: Improvements that affect multiple user stories
+
+- [ ] T071 [P] Implement search functionality: search_rows Tauri command in src-tauri/src/commands.rs accepting query and optional column_index, returning matching row indices
+- [ ] T072 [P] Create search UI in src/index.html: search bar with column filter dropdown, results navigation
+- [ ] T073 [P] Implement theme support in src/style.css: dark/light theme following system preference using prefers-color-scheme media query
+- [ ] T074 [P] Add comprehensive error handling: improve error messages across all commands, add error boundary in frontend, log errors for debugging
+- [ ] T075 [P] Implement close window warning in src/main.ts: detect unsaved changes on window close, prompt user to save before exit using Tauri window events
+- [ ] T076 [P] Add CSV encoding detection in src-tauri/src/csv_engine.rs: detect UTF-8 vs Latin-1, handle BOM markers
+- [ ] T077 [P] Handle absolute image paths in src/image-preview.ts: fallback to absolute path loading, warn user about portability issues
+- [ ] T078 [P] Add file modification detection in src-tauri/src/commands.rs: check file modification time on save, prompt reload or force-save if externally modified
+- [ ] T079 [P] Create README.md with installation instructions, usage guide, keyboard shortcuts reference, troubleshooting section
+- [ ] T080 [P] Add toast notification system in src/main.ts for user feedback: save success, errors, warnings displayed as non-blocking toasts
+- [ ] T081 Write integration test for complete workflow in tests/integration_test.rs: open CSV → navigate → edit → save → reopen → verify persistence
+- [ ] T082 Performance test with large file in tests/performance_test.rs: create 100,000 row CSV, verify <5s open time, <100ms navigation, <200MB memory
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies
+
+- **Setup (Phase 1)**: No dependencies - can start immediately
+- **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all user stories
+- **User Stories (Phase 3-7)**: All depend on Foundational phase completion
+  - User stories can proceed in parallel (if multiple developers) after foundation is complete
+  - Or sequentially in priority order (P1 → P2 → P3 → P4 → P5) for single developer
+- **Polish (Phase 8)**: Depends on desired user stories being complete (minimally US1-US4)
+
+### User Story Dependencies
+
+- **User Story 1 (P1)**: Can start after Foundational (Phase 2) - No dependencies on other stories - THIS IS THE MVP
+- **User Story 2 (P2)**: Can start after Foundational (Phase 2) - Extends US1 by adding toggle controls but US1 must be complete for context
+- **User Story 3 (P3)**: Depends on User Story 2 (adds new values to existing toggle system)
+- **User Story 4 (P4)**: Can start after Foundational (Phase 2) - Independent of US2/US3 (text editing orthogonal to class toggles)
+- **User Story 5 (P5)**: Can start after User Story 1 (enhances navigation introduced in US1)
+
+### Within Each User Story
+
+- Rust backend tasks before frontend tasks (commands must exist before frontend can invoke them)
+- Core components before integration tasks
+- UI components can be built in parallel with backend commands ([P] marked)
+- Story complete before moving to next priority
+
+### Parallel Opportunities
+
+- All Setup tasks (T002-T006) can run in parallel after T001
+- All Foundational Rust tasks (T007-T011) can run in parallel
+- All Foundational test tasks (T015-T021) can run in parallel after implementation
+- Within each user story:
+  - Backend commands ([P]) can be built in parallel with frontend components ([P])
+  - Multiple UI components within the same story can be built in parallel
+- User Stories 2 and 4 can be developed in parallel by different developers (after US1 complete)
+
+---
+
+## Parallel Example: User Story 1
+
+```bash
+# Backend and frontend can be built in parallel:
+Parallel Group 1:
+  Task T022: Implement open_csv Tauri command
+  Task T023: Implement get_row Tauri command
+  Task T024: Implement get_csv_stats Tauri command
+  Task T027: Create row editor form component
+  Task T028: Create image preview component
+  Task T029: Create HTML layout
+  Task T030: Create CSS styling
+
+# After parallel group completes, integration tasks:
+Sequential:
+  Task T025: Register Tauri commands
+  Task T031: Implement CSV open workflow
+  Task T032-T034: Error handling and status bar
+```
+
+---
+
+## Implementation Strategy
+
+### MVP First (User Story 1 Only)
+
+1. Complete Phase 1: Setup (T001-T006)
+2. Complete Phase 2: Foundational (T007-T021) - CRITICAL: All tests must pass
+3. Complete Phase 3: User Story 1 (T022-T034)
+4. **STOP and VALIDATE**:
+   - Open a real CSV file with images
+   - Verify first row displays correctly
+   - Verify image loads from relative path
+   - Verify error handling for missing images
+5. Deploy/demo if ready - you now have a working CSV viewer with image preview!
+
+### Incremental Delivery
+
+1. Complete Setup + Foundational → Foundation ready (CSV engine working)
+2. Add User Story 1 → Test independently → **MVP RELEASE** (view CSV with images)
+3. Add User Story 2 → Test independently → **RELEASE 2** (toggle class values - core annotation workflow)
+4. Add User Story 3 → Test independently → **RELEASE 3** (add new classes - complete annotation tool)
+5. Add User Story 4 → Test independently → **RELEASE 4** (edit all fields - full editing capability)
+6. Add User Story 5 → Test independently → **RELEASE 5** (large dataset support - production ready)
+7. Add Polish → **RELEASE 6** (search, themes, comprehensive error handling)
+
+Each release adds value without breaking previous functionality.
+
+### Parallel Team Strategy
+
+With two developers:
+
+1. Both complete Setup + Foundational together
+2. Once Foundational is done:
+   - **Developer A**: User Story 1 (T022-T034) then User Story 2 (T035-T044) then User Story 3 (T045-T051)
+   - **Developer B**: Prepare User Story 4 foundation, then implement User Story 4 (T052-T060) and User Story 5 (T061-T070)
+3. Both work on Polish (Phase 8) together
+
+---
+
+## Notes
+
+- **[P] tasks** = different files, no dependencies - safe to parallelize
+- **[Story] label** maps task to specific user story for traceability
+- Each user story should be independently testable at its checkpoint
+- All Rust unit tests (T015-T021) must pass before starting user stories
+- Commit after each task or logical group
+- Test at each checkpoint to validate story works independently
+- The CSV engine (Phase 2) is critical - invest time in thorough testing
+- Image preview requires Tauri asset protocol configuration (T013) - don't skip this
+- Memory optimization (T067-T068) is essential for large file support
+- Save functionality (US4) must handle concurrent file modification (T078)
+
+## Task Count Summary
+
+- **Total Tasks**: 82
+- **Phase 1 (Setup)**: 6 tasks
+- **Phase 2 (Foundational)**: 15 tasks (7 implementation + 7 tests + 1 config)
+- **Phase 3 (US1 - Load & View)**: 13 tasks
+- **Phase 4 (US2 - Toggle Classes)**: 10 tasks
+- **Phase 5 (US3 - Add Classes)**: 7 tasks
+- **Phase 6 (US4 - Edit Text)**: 9 tasks
+- **Phase 7 (US5 - Performance)**: 10 tasks
+- **Phase 8 (Polish)**: 12 tasks
+
+**Parallel Opportunities**: 47 tasks marked [P] can run in parallel with other tasks in same phase
+
+**MVP Scope**: Phase 1 + Phase 2 + Phase 3 = 34 tasks for working CSV image viewer
