@@ -40,6 +40,19 @@
             <input type="number" id="jump-input" min="1" placeholder="Row #" />
             <button id="jump-btn" class="btn btn-small">Go</button>
           </div>
+          <div class="search-box">
+            <input type="text" id="search-input" placeholder="Search..." />
+            <select id="search-column" class="search-column-select">
+              <option value="">All columns</option>
+            </select>
+            <button id="search-btn" class="btn btn-small">🔍 Search</button>
+            <div id="search-results" class="search-results" style="display: none;">
+              <span id="search-result-count">0 results</span>
+              <button id="search-prev-btn" class="btn btn-tiny" disabled>◀</button>
+              <span id="search-current">-</span>
+              <button id="search-next-btn" class="btn btn-tiny" disabled>▶</button>
+            </div>
+          </div>
         </div>
 
         <div class="main-content">

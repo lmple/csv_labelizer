@@ -1,8 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
-import { renderEditorForm } from './editor';
+import { renderEditorForm, hasChanges, markAsSaved } from './editor';
 import { loadImage } from './image-preview';
 let currentRowIndex = 0;
 let totalRows = 0;
+let saveCurrentRowCallback = null;
 export function initializeNavigation(rowCount) {
     totalRows = rowCount;
     currentRowIndex = 0;
@@ -12,6 +13,30 @@ export function initializeNavigation(rowCount) {
 }
 export function getCurrentRowIndex() {
     return currentRowIndex;
+}
+export function setSaveCallback(callback) {
+    saveCurrentRowCallback = callback;
+}
+async function checkUnsavedChanges() {
+    if (!hasChanges()) {
+        return true; // No changes, proceed
+    }
+    const choice = confirm('You have unsaved changes. Do you want to save before navigating?\n\n' +
+        'Click "OK" to save and navigate, or "Cancel" to discard changes and navigate.');
+    if (choice && saveCurrentRowCallback) {
+        // User chose to save
+        try {
+            await saveCurrentRowCallback();
+            return true;
+        }
+        catch (error) {
+            alert(`Failed to save: ${error}`);
+            return false; // Don't navigate if save failed
+        }
+    }
+    // User chose to discard changes
+    markAsSaved(); // Clear the unsaved flag
+    return true;
 }
 function setupNavigationButtons() {
     const prevBtn = document.getElementById('prev-btn');
@@ -68,26 +93,37 @@ function setupKeyboardShortcuts() {
 }
 async function navigateNext() {
     if (currentRowIndex < totalRows - 1) {
-        currentRowIndex++;
-        await loadCurrentRow();
-        updateNavigationUI();
+        const canProceed = await checkUnsavedChanges();
+        if (canProceed) {
+            currentRowIndex++;
+            await loadCurrentRow();
+            updateNavigationUI();
+        }
     }
 }
 async function navigatePrevious() {
     if (currentRowIndex > 0) {
-        currentRowIndex--;
-        await loadCurrentRow();
-        updateNavigationUI();
+        const canProceed = await checkUnsavedChanges();
+        if (canProceed) {
+            currentRowIndex--;
+            await loadCurrentRow();
+            updateNavigationUI();
+        }
     }
 }
-async function jumpToRow(index) {
+export async function jumpToRow(index) {
     if (index >= 0 && index < totalRows) {
-        currentRowIndex = index;
-        await loadCurrentRow();
-        updateNavigationUI();
+        const canProceed = await checkUnsavedChanges();
+        if (canProceed) {
+            currentRowIndex = index;
+            await loadCurrentRow();
+            updateNavigationUI();
+        }
     }
 }
 async function loadCurrentRow() {
+    // Disable navigation during loading
+    setNavigationEnabled(false);
     try {
         const rowData = await invoke('get_row', { index: currentRowIndex });
         renderEditorForm(rowData);
@@ -97,6 +133,26 @@ async function loadCurrentRow() {
         console.error('Failed to load row:', error);
         alert(`Failed to load row: ${error}`);
     }
+    finally {
+        // Re-enable navigation
+        setNavigationEnabled(true);
+    }
+}
+function setNavigationEnabled(enabled) {
+    const prevBtn = document.getElementById('prev-btn');
+    const nextBtn = document.getElementById('next-btn');
+    const jumpBtn = document.getElementById('jump-btn');
+    const jumpInput = document.getElementById('jump-input');
+    if (prevBtn)
+        prevBtn.disabled = !enabled || currentRowIndex === 0;
+    if (nextBtn)
+        nextBtn.disabled = !enabled || currentRowIndex === totalRows - 1;
+    if (jumpBtn)
+        jumpBtn.disabled = !enabled;
+    if (jumpInput)
+        jumpInput.disabled = !enabled;
+    // Show loading cursor
+    document.body.style.cursor = enabled ? 'default' : 'wait';
 }
 function updateNavigationUI() {
     const rowCounter = document.getElementById('row-counter');

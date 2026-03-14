@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 /// Global state for the CSV editor application
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +34,10 @@ pub struct CsvState {
 
     /// Map of class column indices to their unique values
     pub class_values: std::collections::HashMap<usize, Vec<String>>,
+
+    /// Last known modification time of the CSV file (for detecting external changes)
+    #[serde(skip)]
+    pub file_modified_time: Option<SystemTime>,
 }
 
 impl Default for CsvState {
@@ -48,6 +53,7 @@ impl Default for CsvState {
             has_unsaved_changes: false,
             class_columns: Vec::new(),
             class_values: std::collections::HashMap::new(),
+            file_modified_time: None,
         }
     }
 }

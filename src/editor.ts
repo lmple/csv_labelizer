@@ -5,6 +5,11 @@ let currentRowIndex: number = 0;
 let classValuesMap: ClassValuesMap = {};
 let hasUnsavedChanges: boolean = false;
 
+// Undo/redo state
+let fieldHistory: string[][] = [];
+let historyIndex: number = -1;
+const MAX_HISTORY = 50;
+
 export function initializeEditor(metadata: CsvMetadata, classValues: ClassValuesMap) {
     currentMetadata = metadata;
     classValuesMap = classValues;
@@ -25,6 +30,10 @@ export function renderEditorForm(rowData: RowData) {
     }
 
     formContainer.innerHTML = '';
+
+    // Reset history for new row
+    fieldHistory = [rowData.fields.slice()]; // Store initial state
+    historyIndex = 0;
 
     currentMetadata.headers.forEach((header, index) => {
         const fieldContainer = document.createElement('div');
@@ -60,6 +69,7 @@ export function renderEditorForm(rowData: RowData) {
             select.addEventListener('change', () => {
                 hasUnsavedChanges = true;
                 updateUnsavedIndicator();
+                saveFieldHistoryState();
             });
 
             selectWrapper.appendChild(select);
@@ -82,6 +92,7 @@ export function renderEditorForm(rowData: RowData) {
             input.addEventListener('input', () => {
                 hasUnsavedChanges = true;
                 updateUnsavedIndicator();
+                saveFieldHistoryState();
             });
 
             fieldContainer.appendChild(input);
@@ -164,10 +175,97 @@ function updateUnsavedIndicator() {
 export function markAsSaved() {
     hasUnsavedChanges = false;
     updateUnsavedIndicator();
+    // Clear history after save
+    fieldHistory = [getFieldValues()];
+    historyIndex = 0;
 }
 
 export function hasChanges(): boolean {
     return hasUnsavedChanges;
+}
+
+/**
+ * Save current field state to history
+ */
+function saveFieldHistoryState() {
+    const currentState = getFieldValues();
+
+    // Remove any future history if we're not at the end
+    if (historyIndex < fieldHistory.length - 1) {
+        fieldHistory = fieldHistory.slice(0, historyIndex + 1);
+    }
+
+    // Add new state
+    fieldHistory.push(currentState);
+    historyIndex++;
+
+    // Limit history size
+    if (fieldHistory.length > MAX_HISTORY) {
+        fieldHistory.shift();
+        historyIndex--;
+    }
+}
+
+/**
+ * Undo the last change
+ */
+export function undo() {
+    if (!canUndo()) {
+        return;
+    }
+
+    historyIndex--;
+    restoreFieldState(fieldHistory[historyIndex]);
+}
+
+/**
+ * Redo the last undone change
+ */
+export function redo() {
+    if (!canRedo()) {
+        return;
+    }
+
+    historyIndex++;
+    restoreFieldState(fieldHistory[historyIndex]);
+}
+
+/**
+ * Check if undo is available
+ */
+export function canUndo(): boolean {
+    return historyIndex > 0;
+}
+
+/**
+ * Check if redo is available
+ */
+export function canRedo(): boolean {
+    return historyIndex < fieldHistory.length - 1;
+}
+
+/**
+ * Restore field state from history
+ */
+function restoreFieldState(state: string[]) {
+    if (!currentMetadata) {
+        return;
+    }
+
+    currentMetadata.headers.forEach((_, index) => {
+        const field = document.getElementById(`field-${index}`) as
+            | HTMLInputElement
+            | HTMLSelectElement
+            | null;
+
+        if (field && index < state.length) {
+            field.value = state[index];
+        }
+    });
+
+    // Check if there are any differences from initial state
+    hasUnsavedChanges = historyIndex !== 0;
+    updateUnsavedIndicator();
 }
 
 function showToast(message: string) {

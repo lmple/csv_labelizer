@@ -21,6 +21,8 @@ fn main() {
             commands::get_class_columns,
             commands::add_class_value,
             commands::set_image_column,
+            commands::copy_and_save,
+            commands::search_rows,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

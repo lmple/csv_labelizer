@@ -33,7 +33,20 @@ export async function loadImage(rowData: RowData) {
     imageContainer.innerHTML = '<p class="loading">Loading image...</p>';
 
     try {
-        const fullPath = `${currentCsvDir}/${imagePath}`;
+        // Check if path is absolute (starts with / or C:\ etc)
+        const isAbsolute = imagePath.startsWith('/') || /^[A-Z]:\\/i.test(imagePath);
+
+        let fullPath: string;
+        let warningMessage = '';
+
+        if (isAbsolute) {
+            fullPath = imagePath;
+            warningMessage = '⚠️ Using absolute path (may not be portable across systems)';
+            console.warn('Absolute image path detected:', imagePath);
+        } else {
+            fullPath = `${currentCsvDir}/${imagePath}`;
+        }
+
         const assetUrl = convertFileSrc(fullPath);
 
         const img = document.createElement('img');
@@ -43,6 +56,16 @@ export async function loadImage(rowData: RowData) {
         img.onload = () => {
             imageContainer.innerHTML = '';
             imageContainer.appendChild(img);
+
+            // Show warning for absolute paths
+            if (warningMessage) {
+                const warning = document.createElement('p');
+                warning.className = 'hint';
+                warning.style.marginTop = '0.5rem';
+                warning.style.color = 'var(--warning-color)';
+                warning.textContent = warningMessage;
+                imageContainer.appendChild(warning);
+            }
         };
 
         img.onerror = () => {

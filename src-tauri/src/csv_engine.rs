@@ -2,23 +2,43 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+/// Detect encoding and strip BOM if present
+/// Returns the starting offset (0 if no BOM, 3 if UTF-8 BOM)
+fn detect_encoding_and_bom<R: Read + Seek>(reader: &mut R) -> Result<u64, String> {
+    let mut bom = [0u8; 3];
+    let bytes_read = reader.read(&mut bom).map_err(|e| format!("Failed to read BOM: {}", e))?;
+
+    // Check for UTF-8 BOM (EF BB BF)
+    if bytes_read >= 3 && bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF {
+        println!("Detected UTF-8 BOM, skipping 3 bytes");
+        return Ok(3);
+    }
+
+    // No BOM found, reset to beginning
+    reader.seek(SeekFrom::Start(0)).map_err(|e| format!("Failed to seek: {}", e))?;
+    Ok(0)
+}
+
 /// Build offset index for a CSV file
 /// Returns: (offsets: Vec<u64>, delimiter: u8, headers: Vec<String>)
 pub fn build_offset_index(file_path: &Path) -> Result<(Vec<u64>, u8, Vec<String>), String> {
     let file = File::open(file_path).map_err(|e| format!("Failed to open file: {}", e))?;
     let mut reader = BufReader::new(file);
 
+    // Detect and handle BOM
+    let bom_offset = detect_encoding_and_bom(&mut reader)?;
+
     // Detect delimiter from first few lines
     let delimiter = detect_delimiter(&mut reader)?;
 
-    // Reset to beginning
+    // Reset to after BOM (not beginning)
     reader
-        .seek(SeekFrom::Start(0))
+        .seek(SeekFrom::Start(bom_offset))
         .map_err(|e| format!("Failed to seek: {}", e))?;
 
     let mut offsets = Vec::new();
     let mut line = String::new();
-    let mut current_offset: u64 = 0;
+    let mut current_offset: u64 = bom_offset;
 
     // Read header line
     let header_bytes = reader
@@ -229,29 +249,43 @@ pub fn write_row_at_offset(
 
     let next_row_offset = offset + old_line.len() as u64;
 
-    // Read everything after the current row
-    let mut tail = Vec::new();
-    reader
-        .seek(SeekFrom::Start(next_row_offset))
-        .map_err(|e| format!("Failed to seek to tail: {}", e))?;
-    reader
-        .read_to_end(&mut tail)
-        .map_err(|e| format!("Failed to read tail: {}", e))?;
+    // Get file size to determine tail size
+    let file_size = file.metadata()
+        .map_err(|e| format!("Failed to get file metadata: {}", e))?
+        .len();
+    let tail_size = file_size - next_row_offset;
 
-    // Write new row at offset
-    file.seek(SeekFrom::Start(offset))
-        .map_err(|e| format!("Failed to seek for write: {}", e))?;
-    file.write_all(new_row_bytes)
-        .map_err(|e| format!("Failed to write new row: {}", e))?;
+    // Threshold: 500MB
+    const LARGE_FILE_THRESHOLD: u64 = 500 * 1024 * 1024;
 
-    // Write tail
-    file.write_all(&tail)
-        .map_err(|e| format!("Failed to write tail: {}", e))?;
+    if file_size > LARGE_FILE_THRESHOLD {
+        // Use streaming for large files
+        write_tail_streamed(&mut file, offset, new_row_bytes, next_row_offset, tail_size)?;
+    } else {
+        // Use in-memory buffer for smaller files (faster)
+        let mut tail = Vec::new();
+        reader
+            .seek(SeekFrom::Start(next_row_offset))
+            .map_err(|e| format!("Failed to seek to tail: {}", e))?;
+        reader
+            .read_to_end(&mut tail)
+            .map_err(|e| format!("Failed to read tail: {}", e))?;
 
-    // Truncate if file got shorter
-    let new_file_len = offset + new_row_len as u64 + tail.len() as u64;
-    file.set_len(new_file_len)
-        .map_err(|e| format!("Failed to truncate: {}", e))?;
+        // Write new row at offset
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|e| format!("Failed to seek for write: {}", e))?;
+        file.write_all(new_row_bytes)
+            .map_err(|e| format!("Failed to write new row: {}", e))?;
+
+        // Write tail
+        file.write_all(&tail)
+            .map_err(|e| format!("Failed to write tail: {}", e))?;
+
+        // Truncate if file got shorter
+        let new_file_len = offset + new_row_len as u64 + tail.len() as u64;
+        file.set_len(new_file_len)
+            .map_err(|e| format!("Failed to truncate: {}", e))?;
+    }
 
     Ok(())
 }
@@ -322,4 +356,111 @@ pub fn extract_unique_values(
     values.sort();
 
     Ok(values)
+}
+
+/// Calculate memory usage of the offset index
+pub fn calculate_index_memory_usage(offset_count: usize) -> usize {
+    // Each offset is 8 bytes (u64)
+    offset_count * std::mem::size_of::<u64>()
+}
+
+/// Verify memory usage is within acceptable limits
+pub fn verify_memory_budget(offset_count: usize, max_memory_mb: usize) -> bool {
+    let memory_bytes = calculate_index_memory_usage(offset_count);
+    let memory_mb = memory_bytes / (1024 * 1024);
+
+    println!(
+        "Memory profiling: {} rows, {} bytes ({:.2} MB) for offset index",
+        offset_count,
+        memory_bytes,
+        memory_bytes as f64 / (1024.0 * 1024.0)
+    );
+
+    memory_mb <= max_memory_mb
+}
+
+/// Write tail using streaming for large files (>500MB)
+/// Uses a temporary file to avoid loading entire tail into memory
+fn write_tail_streamed(
+    file: &mut File,
+    offset: u64,
+    new_row_bytes: &[u8],
+    tail_start: u64,
+    tail_size: u64,
+) -> Result<(), String> {
+    const CHUNK_SIZE: usize = 8 * 1024 * 1024; // 8MB chunks
+
+    println!(
+        "Using streaming write for large file (tail size: {:.2} MB)",
+        tail_size as f64 / (1024.0 * 1024.0)
+    );
+
+    // Create temporary file
+    let temp_path = std::env::temp_dir().join(format!("csv_tail_{}.tmp", std::process::id()));
+    let mut temp_file = File::create(&temp_path)
+        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+
+    // Copy tail to temp file in chunks
+    let mut reader = BufReader::new(file.try_clone().unwrap());
+    reader
+        .seek(SeekFrom::Start(tail_start))
+        .map_err(|e| format!("Failed to seek to tail: {}", e))?;
+
+    let mut buffer = vec![0u8; CHUNK_SIZE];
+    let mut copied = 0u64;
+
+    loop {
+        let bytes_read = reader
+            .read(&mut buffer)
+            .map_err(|e| format!("Failed to read chunk: {}", e))?;
+
+        if bytes_read == 0 {
+            break;
+        }
+
+        temp_file
+            .write_all(&buffer[..bytes_read])
+            .map_err(|e| format!("Failed to write to temp file: {}", e))?;
+
+        copied += bytes_read as u64;
+    }
+
+    println!("Copied {} bytes to temp file", copied);
+
+    // Write new row at offset
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|e| format!("Failed to seek for write: {}", e))?;
+    file.write_all(new_row_bytes)
+        .map_err(|e| format!("Failed to write new row: {}", e))?;
+
+    // Stream tail back from temp file
+    temp_file
+        .seek(SeekFrom::Start(0))
+        .map_err(|e| format!("Failed to seek temp file: {}", e))?;
+    let mut temp_reader = BufReader::new(temp_file);
+
+    loop {
+        let bytes_read = temp_reader
+            .read(&mut buffer)
+            .map_err(|e| format!("Failed to read from temp: {}", e))?;
+
+        if bytes_read == 0 {
+            break;
+        }
+
+        file.write_all(&buffer[..bytes_read])
+            .map_err(|e| format!("Failed to write tail chunk: {}", e))?;
+    }
+
+    // Truncate to new size
+    let new_file_len = offset + new_row_bytes.len() as u64 + tail_size;
+    file.set_len(new_file_len)
+        .map_err(|e| format!("Failed to truncate: {}", e))?;
+
+    // Clean up temp file
+    std::fs::remove_file(&temp_path).ok();
+
+    println!("Streaming write completed");
+
+    Ok(())
 }

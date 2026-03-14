@@ -11,4 +11,8 @@ export default defineConfig({
     strictPort: true,
   },
   clearScreen: false,
+  test: {
+    globals: true,
+    include: ['../**/*.{test,spec}.{js,ts}'],
+  },
 });
