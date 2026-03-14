@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CSV Labelizer</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="app-header">
+        <h1>📊 CSV Labelizer</h1>
+        <div class="header-actions">
+          <button id="open-csv-btn" class="btn btn-primary">Open CSV File</button>
+          <button id="save-btn" class="btn btn-success" disabled>
+            💾 Save <span id="unsaved-indicator" style="display: none;">*</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="status-bar">
+        <div class="status-item">
+          <strong>File:</strong> <span id="status-file-path">No file opened</span>
+        </div>
+        <div class="status-item">
+          <strong>Rows:</strong> <span id="status-row-count">-</span>
+        </div>
+        <div class="status-item">
+          <span id="status-delimiter">-</span>
+        </div>
+      </div>
+
+      <div id="editor-section" class="editor-section" style="display: none;">
+        <div class="navigation-bar">
+          <button id="prev-btn" class="btn btn-nav">◀ Previous</button>
+          <span id="row-counter" class="row-counter">Row 1 of 1</span>
+          <button id="next-btn" class="btn btn-nav">Next ▶</button>
+          <div class="jump-to">
+            <label for="jump-input">Jump to row:</label>
+            <input type="number" id="jump-input" min="1" placeholder="Row #" />
+            <button id="jump-btn" class="btn btn-small">Go</button>
+          </div>
+        </div>
+
+        <div class="main-content">
+          <div class="image-panel">
+            <h2>Image Preview</h2>
+            <div id="image-preview" class="image-container">
+              <p class="no-image">No image loaded</p>
+            </div>
+          </div>
+
+          <div class="editor-panel">
+            <h2>Row Data</h2>
+            <div id="editor-form" class="editor-form">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="welcome-screen">
+        <div class="welcome-content">
+          <h2>Welcome to CSV Labelizer</h2>
+          <p>A fast and efficient tool for editing large CSV files with image labeling.</p>
+          <ul class="features-list">
+            <li>✓ Open CSV files with any delimiter (comma, semicolon, tab)</li>
+            <li>✓ View images associated with each row</li>
+            <li>✓ Toggle class values for quick annotation</li>
+            <li>✓ Edit text fields with ease</li>
+            <li>✓ Handles large files efficiently (100,000+ rows)</li>
+          </ul>
+          <button id="open-csv-btn-welcome" class="btn btn-primary btn-large">
+            Open CSV File to Get Started
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>

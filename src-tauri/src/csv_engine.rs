@@ -1,0 +1,325 @@
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::path::Path;
+
+/// Build offset index for a CSV file
+/// Returns: (offsets: Vec<u64>, delimiter: u8, headers: Vec<String>)
+pub fn build_offset_index(file_path: &Path) -> Result<(Vec<u64>, u8, Vec<String>), String> {
+    let file = File::open(file_path).map_err(|e| format!("Failed to open file: {}", e))?;
+    let mut reader = BufReader::new(file);
+
+    // Detect delimiter from first few lines
+    let delimiter = detect_delimiter(&mut reader)?;
+
+    // Reset to beginning
+    reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|e| format!("Failed to seek: {}", e))?;
+
+    let mut offsets = Vec::new();
+    let mut line = String::new();
+    let mut current_offset: u64 = 0;
+
+    // Read header line
+    let header_bytes = reader
+        .read_line(&mut line)
+        .map_err(|e| format!("Failed to read header: {}", e))?;
+
+    if header_bytes == 0 {
+        return Err("Empty file".to_string());
+    }
+
+    // Parse headers
+    let headers = parse_csv_line(&line.trim_end(), delimiter);
+
+    current_offset += header_bytes as u64;
+    line.clear();
+
+    // Build offset index for data rows
+    while reader
+        .read_line(&mut line)
+        .map_err(|e| format!("Failed to read line: {}", e))?
+        > 0
+    {
+        // Skip empty lines
+        if line.trim().is_empty() {
+            current_offset += line.len() as u64;
+            line.clear();
+            continue;
+        }
+
+        offsets.push(current_offset);
+        current_offset += line.len() as u64;
+        line.clear();
+    }
+
+    Ok((offsets, delimiter, headers))
+}
+
+/// Detect CSV delimiter by analyzing first 5 lines
+pub fn detect_delimiter<R: Read + Seek>(reader: &mut BufReader<R>) -> Result<u8, String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+
+    // Read up to 5 lines for analysis
+    for _ in 0..5 {
+        line.clear();
+        let bytes_read = reader
+            .read_line(&mut line)
+            .map_err(|e| format!("Failed to read line: {}", e))?;
+        if bytes_read == 0 {
+            break;
+        }
+        lines.push(line.clone());
+    }
+
+    if lines.is_empty() {
+        return Ok(b','); // Default to comma
+    }
+
+    // Count occurrences of common delimiters
+    let delimiters = [b',', b';', b'\t', b'|', b' '];
+    let mut delimiter_scores: Vec<(u8, f32)> = delimiters
+        .iter()
+        .map(|&delim| {
+            let counts: Vec<usize> = lines
+                .iter()
+                .map(|line| count_delimiter_occurrences(line, delim))
+                .collect();
+
+            // Calculate consistency score (lower variance = more consistent)
+            let avg = counts.iter().sum::<usize>() as f32 / counts.len() as f32;
+            let variance = counts
+                .iter()
+                .map(|&c| (c as f32 - avg).powi(2))
+                .sum::<f32>()
+                / counts.len() as f32;
+
+            // Score: high average count, low variance
+            let score = if avg > 0.0 { avg / (1.0 + variance) } else { 0.0 };
+
+            (delim, score)
+        })
+        .collect();
+
+    delimiter_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+    // Reset reader to beginning
+    reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|e| format!("Failed to seek: {}", e))?;
+
+    Ok(delimiter_scores[0].0)
+}
+
+/// Count occurrences of delimiter in a line (outside quotes)
+fn count_delimiter_occurrences(line: &str, delimiter: u8) -> usize {
+    let mut count = 0;
+    let mut in_quotes = false;
+
+    for ch in line.chars() {
+        if ch == '"' {
+            in_quotes = !in_quotes;
+        } else if !in_quotes && ch == delimiter as char {
+            count += 1;
+        }
+    }
+
+    count
+}
+
+/// Read a single row by its index
+pub fn read_row_at_offset(
+    file_path: &Path,
+    offset: u64,
+    delimiter: u8,
+) -> Result<Vec<String>, String> {
+    let mut file = File::open(file_path).map_err(|e| format!("Failed to open file: {}", e))?;
+
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|e| format!("Failed to seek to offset: {}", e))?;
+
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+
+    reader
+        .read_line(&mut line)
+        .map_err(|e| format!("Failed to read line: {}", e))?;
+
+    Ok(parse_csv_line(&line.trim_end(), delimiter))
+}
+
+/// Parse a CSV line respecting quotes
+fn parse_csv_line(line: &str, delimiter: u8) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut current_field = String::new();
+    let mut in_quotes = false;
+    let delim_char = delimiter as char;
+
+    let mut chars = line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                // Check if this is an escaped quote (doubled quote)
+                if in_quotes && chars.peek() == Some(&'"') {
+                    current_field.push('"');
+                    chars.next(); // Skip the second quote
+                } else {
+                    in_quotes = !in_quotes;
+                }
+            }
+            c if c == delim_char && !in_quotes => {
+                fields.push(current_field.clone());
+                current_field.clear();
+            }
+            _ => {
+                current_field.push(ch);
+            }
+        }
+    }
+
+    // Add the last field
+    fields.push(current_field);
+
+    fields
+}
+
+/// Write a row in-place (same or different length strategy)
+pub fn write_row_at_offset(
+    file_path: &Path,
+    offset: u64,
+    new_row_fields: &[String],
+    delimiter: u8,
+    old_row_length: Option<usize>,
+) -> Result<(), String> {
+    // Format new row
+    let new_row = format_csv_row(new_row_fields, delimiter);
+    let new_row_bytes = new_row.as_bytes();
+    let new_row_len = new_row_bytes.len();
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(file_path)
+        .map_err(|e| format!("Failed to open file for writing: {}", e))?;
+
+    // If we know the old row length and it matches, we can do in-place overwrite
+    if let Some(old_len) = old_row_length {
+        if new_row_len == old_len {
+            // Simple in-place overwrite
+            file.seek(SeekFrom::Start(offset))
+                .map_err(|e| format!("Failed to seek: {}", e))?;
+            file.write_all(new_row_bytes)
+                .map_err(|e| format!("Failed to write: {}", e))?;
+            return Ok(());
+        }
+    }
+
+    // Different length: read tail, write new row + tail
+    // Find the end of the current row
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|e| format!("Failed to seek: {}", e))?;
+
+    let mut reader = BufReader::new(file.try_clone().unwrap());
+    let mut old_line = String::new();
+    reader
+        .read_line(&mut old_line)
+        .map_err(|e| format!("Failed to read old line: {}", e))?;
+
+    let next_row_offset = offset + old_line.len() as u64;
+
+    // Read everything after the current row
+    let mut tail = Vec::new();
+    reader
+        .seek(SeekFrom::Start(next_row_offset))
+        .map_err(|e| format!("Failed to seek to tail: {}", e))?;
+    reader
+        .read_to_end(&mut tail)
+        .map_err(|e| format!("Failed to read tail: {}", e))?;
+
+    // Write new row at offset
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|e| format!("Failed to seek for write: {}", e))?;
+    file.write_all(new_row_bytes)
+        .map_err(|e| format!("Failed to write new row: {}", e))?;
+
+    // Write tail
+    file.write_all(&tail)
+        .map_err(|e| format!("Failed to write tail: {}", e))?;
+
+    // Truncate if file got shorter
+    let new_file_len = offset + new_row_len as u64 + tail.len() as u64;
+    file.set_len(new_file_len)
+        .map_err(|e| format!("Failed to truncate: {}", e))?;
+
+    Ok(())
+}
+
+/// Format a row for CSV output (with proper quoting)
+fn format_csv_row(fields: &[String], delimiter: u8) -> String {
+    let delim_char = delimiter as char;
+
+    let formatted_fields: Vec<String> = fields
+        .iter()
+        .map(|field| {
+            // Quote if field contains delimiter, quotes, or newlines
+            if field.contains(delim_char)
+                || field.contains('"')
+                || field.contains('\n')
+                || field.contains('\r')
+            {
+                format!("\"{}\"", field.replace('"', "\"\""))
+            } else {
+                field.clone()
+            }
+        })
+        .collect();
+
+    format!("{}\n", formatted_fields.join(&delim_char.to_string()))
+}
+
+/// Detect image column by name pattern
+pub fn detect_image_column(headers: &[String]) -> Option<usize> {
+    let patterns = ["img_path", "image", "img", "photo", "picture", "file"];
+
+    headers.iter().position(|header| {
+        let lower = header.to_lowercase();
+        patterns.iter().any(|&pattern| lower.contains(pattern))
+    })
+}
+
+/// Detect class columns (columns with "CLASS" in name, case-insensitive)
+pub fn detect_class_columns(headers: &[String]) -> Vec<usize> {
+    headers
+        .iter()
+        .enumerate()
+        .filter(|(_, header)| header.to_uppercase().contains("CLASS"))
+        .map(|(idx, _)| idx)
+        .collect()
+}
+
+/// Extract unique values from a specific column
+pub fn extract_unique_values(
+    file_path: &Path,
+    offsets: &[u64],
+    column_index: usize,
+    delimiter: u8,
+) -> Result<Vec<String>, String> {
+    let mut unique_values = std::collections::HashSet::new();
+
+    for &offset in offsets {
+        let fields = read_row_at_offset(file_path, offset, delimiter)?;
+        if column_index < fields.len() {
+            let value = fields[column_index].clone();
+            if !value.is_empty() {
+                unique_values.insert(value);
+            }
+        }
+    }
+
+    let mut values: Vec<String> = unique_values.into_iter().collect();
+    values.sort();
+
+    Ok(values)
+}

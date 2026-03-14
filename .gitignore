@@ -1,0 +1,41 @@
+# Rust
+target/
+debug/
+release/
+*.rs.bk
+*.rlib
+*.prof*
+Cargo.lock
+
+# Node.js / TypeScript / JavaScript
+node_modules/
+dist/
+build/
+*.log
+.env*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Tauri
+src-tauri/target/
+
+# Tauri
+src-tauri/target/
+src-tauri/WixTools/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Test coverage
+coverage/
+*.lcov
