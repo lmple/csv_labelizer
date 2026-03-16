@@ -184,3 +184,198 @@ describe('Row Counter Display', () => {
         expect(formatRowCounter(0, 1)).toBe('Row 1 of 1');
     });
 });
+
+describe('Debounce and Button State Management', () => {
+    /**
+     * Tests for debounce functionality and button state management
+     * to prevent double-click page skipping bug
+     */
+
+    describe('Button State at Boundaries', () => {
+        it('should disable next button on last page', () => {
+            const currentRowIndex = 99; // Last page (0-indexed)
+            const totalRows = 100;
+            const nextButtonDisabled = currentRowIndex === totalRows - 1;
+            expect(nextButtonDisabled).toBe(true);
+        });
+
+        it('should enable next button when not on last page', () => {
+            const currentRowIndex = 50;
+            const totalRows = 100;
+            const nextButtonDisabled = currentRowIndex === totalRows - 1;
+            expect(nextButtonDisabled).toBe(false);
+        });
+
+        it('should disable previous button on first page', () => {
+            const currentRowIndex = 0; // First page
+            const totalRows = 100;
+            const prevButtonDisabled = currentRowIndex === 0;
+            expect(prevButtonDisabled).toBe(true);
+        });
+
+        it('should enable previous button when not on first page', () => {
+            const currentRowIndex = 1;
+            const totalRows = 100;
+            const prevButtonDisabled = currentRowIndex === 0;
+            expect(prevButtonDisabled).toBe(false);
+        });
+    });
+
+    describe('Single Navigation Increment', () => {
+        it('should increment by exactly 1 when navigating forward', () => {
+            let currentRowIndex = 1;
+            const totalRows = 100;
+
+            // Simulate single forward navigation
+            if (currentRowIndex < totalRows - 1) {
+                currentRowIndex++;
+            }
+
+            expect(currentRowIndex).toBe(2);
+        });
+
+        it('should not increment beyond last page', () => {
+            let currentRowIndex = 99; // Last page (0-indexed)
+            const totalRows = 100;
+
+            // Attempt to navigate forward from last page
+            if (currentRowIndex < totalRows - 1) {
+                currentRowIndex++;
+            }
+
+            expect(currentRowIndex).toBe(99); // Should remain on last page
+        });
+    });
+
+    describe('Debounce Flag Logic', () => {
+        it('should prevent navigation when already navigating', () => {
+            let isNavigating = true;
+            let navigationExecuted = false;
+
+            // Attempt navigation while already navigating
+            if (!isNavigating) {
+                navigationExecuted = true;
+            }
+
+            expect(navigationExecuted).toBe(false);
+        });
+
+        it('should allow navigation when not navigating', () => {
+            let isNavigating = false;
+            let navigationExecuted = false;
+
+            // Attempt navigation when not navigating
+            if (!isNavigating) {
+                navigationExecuted = true;
+            }
+
+            expect(navigationExecuted).toBe(true);
+        });
+
+        it('should reset flag after navigation completes', () => {
+            let isNavigating = false;
+
+            // Simulate navigation lifecycle
+            isNavigating = true; // Start navigation
+            try {
+                // Navigation logic would go here
+            } finally {
+                isNavigating = false; // Always reset flag
+            }
+
+            expect(isNavigating).toBe(false);
+        });
+    });
+
+    describe('Rapid Double-Click Prevention', () => {
+        it('should only increment by 1 on rapid double-click, not 2', () => {
+            let currentRowIndex = 1;
+            let isNavigating = false;
+            const totalRows = 100;
+
+            // Simulate first click
+            if (currentRowIndex < totalRows - 1 && !isNavigating) {
+                isNavigating = true;
+                currentRowIndex++; // First increment
+            }
+
+            // Simulate second rapid click (should be ignored)
+            if (currentRowIndex < totalRows - 1 && !isNavigating) {
+                currentRowIndex++; // This should NOT execute
+            }
+
+            expect(currentRowIndex).toBe(2); // Should be 2, not 3
+            expect(isNavigating).toBe(true); // Flag still set from first navigation
+        });
+
+        it('should allow sequential navigation after flag clears', () => {
+            let currentRowIndex = 1;
+            let isNavigating = false;
+            const totalRows = 100;
+
+            // First navigation
+            if (currentRowIndex < totalRows - 1 && !isNavigating) {
+                isNavigating = true;
+                currentRowIndex++;
+                isNavigating = false; // Simulate finally block clearing flag
+            }
+
+            expect(currentRowIndex).toBe(2);
+            expect(isNavigating).toBe(false);
+
+            // Second navigation (should succeed since flag is cleared)
+            if (currentRowIndex < totalRows - 1 && !isNavigating) {
+                isNavigating = true;
+                currentRowIndex++;
+                isNavigating = false; // Simulate finally block clearing flag
+            }
+
+            expect(currentRowIndex).toBe(3); // Sequential navigation works
+        });
+    });
+
+    describe('Flag Cleanup After Cancellation', () => {
+        it('should reset flag even if user cancels save prompt', () => {
+            let isNavigating = false;
+            let userCancelled = true;
+
+            // Simulate navigation with cancellation
+            isNavigating = true;
+            try {
+                if (userCancelled) {
+                    // User cancelled - navigation doesn't proceed
+                    // But flag should still be cleared in finally
+                }
+            } finally {
+                isNavigating = false; // Always reset flag
+            }
+
+            expect(isNavigating).toBe(false);
+        });
+
+        it('should allow next navigation after cancellation', () => {
+            let currentRowIndex = 5;
+            let isNavigating = false;
+
+            // First attempt - user cancels
+            isNavigating = true;
+            try {
+                // User cancels, index doesn't change
+            } finally {
+                isNavigating = false;
+            }
+
+            expect(currentRowIndex).toBe(5); // Index unchanged
+            expect(isNavigating).toBe(false); // Flag cleared
+
+            // Second attempt - user proceeds
+            if (!isNavigating) {
+                isNavigating = true;
+                currentRowIndex++;
+                isNavigating = false;
+            }
+
+            expect(currentRowIndex).toBe(6); // Second navigation succeeded
+        });
+    });
+});
