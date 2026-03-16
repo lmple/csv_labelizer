@@ -1,0 +1,6 @@
+IMAGE_PATH,ANIMAL_CLASS,SCENE_CLASS,NOTES
+img1.jpg,Cat,Indoor,Test note
+img2.jpg,,Outdoor,Empty animal
+img3.jpg,Dog,,Empty scene
+img4.jpg,,,All empty
+img5.jpg,"  ","  ",Whitespace only

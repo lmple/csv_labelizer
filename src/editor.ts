@@ -55,12 +55,25 @@ export function renderEditorForm(rowData: RowData) {
             select.id = `field-${index}`;
             select.className = 'class-field';
 
+            // Add empty option FIRST (always first in dropdown)
+            // This allows empty class fields to remain empty instead of auto-selecting first value
+            // See: specs/003-preserve-empty-classes/spec.md FR-001, FR-007
+            const emptyOption = document.createElement('option');
+            emptyOption.value = '';
+            emptyOption.textContent = '';
+            if (value === '') {
+                emptyOption.selected = true;
+            }
+            select.appendChild(emptyOption);
+
+            // Then add unique values from classValuesMap
             const classValues = classValuesMap[index] || [];
             classValues.forEach((optionValue) => {
                 const option = document.createElement('option');
                 option.value = optionValue;
                 option.textContent = optionValue;
-                if (optionValue === value) {
+                // Only mark as selected if value matches AND value is not empty
+                if (optionValue === value && value !== '') {
                     option.selected = true;
                 }
                 select.appendChild(option);
