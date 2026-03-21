@@ -3,6 +3,7 @@ import { renderEditorForm, hasChanges, markAsSaved } from './editor';
 import { loadImage } from './image-preview';
 let currentRowIndex = 0;
 let totalRows = 0;
+let isNavigating = false; // Debounce flag to prevent concurrent navigation
 let saveCurrentRowCallback = null;
 export function initializeNavigation(rowCount) {
     totalRows = rowCount;
@@ -93,31 +94,61 @@ function setupKeyboardShortcuts() {
 }
 async function navigateNext() {
     if (currentRowIndex < totalRows - 1) {
-        const canProceed = await checkUnsavedChanges();
-        if (canProceed) {
-            currentRowIndex++;
-            await loadCurrentRow();
-            updateNavigationUI();
+        // Guard clause: ignore if navigation already in progress (prevents double-click bug)
+        if (isNavigating)
+            return;
+        isNavigating = true;
+        try {
+            const canProceed = await checkUnsavedChanges();
+            if (canProceed) {
+                currentRowIndex++;
+                await loadCurrentRow();
+                updateNavigationUI();
+            }
+        }
+        finally {
+            // Always reset flag, even if user cancels or error occurs
+            isNavigating = false;
         }
     }
 }
 async function navigatePrevious() {
     if (currentRowIndex > 0) {
-        const canProceed = await checkUnsavedChanges();
-        if (canProceed) {
-            currentRowIndex--;
-            await loadCurrentRow();
-            updateNavigationUI();
+        // Guard clause: ignore if navigation already in progress (prevents double-click bug)
+        if (isNavigating)
+            return;
+        isNavigating = true;
+        try {
+            const canProceed = await checkUnsavedChanges();
+            if (canProceed) {
+                currentRowIndex--;
+                await loadCurrentRow();
+                updateNavigationUI();
+            }
+        }
+        finally {
+            // Always reset flag, even if user cancels or error occurs
+            isNavigating = false;
         }
     }
 }
 export async function jumpToRow(index) {
     if (index >= 0 && index < totalRows) {
-        const canProceed = await checkUnsavedChanges();
-        if (canProceed) {
-            currentRowIndex = index;
-            await loadCurrentRow();
-            updateNavigationUI();
+        // Guard clause: ignore if navigation already in progress (prevents double-click bug)
+        if (isNavigating)
+            return;
+        isNavigating = true;
+        try {
+            const canProceed = await checkUnsavedChanges();
+            if (canProceed) {
+                currentRowIndex = index;
+                await loadCurrentRow();
+                updateNavigationUI();
+            }
+        }
+        finally {
+            // Always reset flag, even if user cancels or error occurs
+            isNavigating = false;
         }
     }
 }
