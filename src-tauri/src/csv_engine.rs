@@ -1,3 +1,4 @@
+use csv::WriterBuilder;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -50,7 +51,7 @@ pub fn build_offset_index(file_path: &Path) -> Result<(Vec<u64>, u8, Vec<String>
     }
 
     // Parse headers
-    let headers = parse_csv_line(&line.trim_end(), delimiter);
+    let headers = parse_csv_line(line.trim_end(), delimiter);
 
     current_offset += header_bytes as u64;
     line.clear();
@@ -104,7 +105,10 @@ pub fn detect_delimiter<R: Read + Seek>(reader: &mut BufReader<R>) -> Result<u8,
         .map(|&delim| {
             let counts: Vec<usize> = lines
                 .iter()
-                .map(|line| count_delimiter_occurrences(line, delim))
+                .map(|line| {
+                    let fields = count_fields_for_delimiter(line, delim);
+                    if fields > 0 { fields - 1 } else { 0 }
+                })
                 .collect();
 
             // Calculate consistency score (lower variance = more consistent)
@@ -132,16 +136,31 @@ pub fn detect_delimiter<R: Read + Seek>(reader: &mut BufReader<R>) -> Result<u8,
     Ok(delimiter_scores[0].0)
 }
 
-/// Count occurrences of delimiter in a line (outside quotes)
-fn count_delimiter_occurrences(line: &str, delimiter: u8) -> usize {
+/// Count fields produced by a delimiter for a given line
+fn count_fields_for_delimiter(line: &str, delimiter: u8) -> usize {
+    let mut reader = csv_core::ReaderBuilder::new().delimiter(delimiter).build();
+    let input = line.as_bytes();
+    let mut field_buf = vec![0u8; input.len().max(1)];
+    let mut input_pos = 0;
     let mut count = 0;
-    let mut in_quotes = false;
 
-    for ch in line.chars() {
-        if ch == '"' {
-            in_quotes = !in_quotes;
-        } else if !in_quotes && ch == delimiter as char {
-            count += 1;
+    loop {
+        let (result, bytes_read, _) =
+            reader.read_field(&input[input_pos..], &mut field_buf);
+        input_pos += bytes_read;
+
+        match result {
+            csv_core::ReadFieldResult::InputEmpty => {
+                count += 1;
+                break;
+            }
+            csv_core::ReadFieldResult::Field { record_end } => {
+                count += 1;
+                if record_end {
+                    break;
+                }
+            }
+            csv_core::ReadFieldResult::OutputFull | csv_core::ReadFieldResult::End => break,
         }
     }
 
@@ -166,41 +185,36 @@ pub fn read_row_at_offset(
         .read_line(&mut line)
         .map_err(|e| format!("Failed to read line: {}", e))?;
 
-    Ok(parse_csv_line(&line.trim_end(), delimiter))
+    Ok(parse_csv_line(line.trim_end(), delimiter))
 }
 
 /// Parse a CSV line respecting quotes
 fn parse_csv_line(line: &str, delimiter: u8) -> Vec<String> {
+    let mut reader = csv_core::ReaderBuilder::new().delimiter(delimiter).build();
+    let input = line.as_bytes();
     let mut fields = Vec::new();
-    let mut current_field = String::new();
-    let mut in_quotes = false;
-    let delim_char = delimiter as char;
+    let mut field_buf = vec![0u8; input.len().max(1)];
+    let mut input_pos = 0;
 
-    let mut chars = line.chars().peekable();
+    loop {
+        let (result, bytes_read, bytes_written) =
+            reader.read_field(&input[input_pos..], &mut field_buf);
+        input_pos += bytes_read;
 
-    while let Some(ch) = chars.next() {
-        match ch {
-            '"' => {
-                // Check if this is an escaped quote (doubled quote)
-                if in_quotes && chars.peek() == Some(&'"') {
-                    current_field.push('"');
-                    chars.next(); // Skip the second quote
-                } else {
-                    in_quotes = !in_quotes;
+        match result {
+            csv_core::ReadFieldResult::InputEmpty => {
+                fields.push(String::from_utf8_lossy(&field_buf[..bytes_written]).into_owned());
+                break;
+            }
+            csv_core::ReadFieldResult::Field { record_end } => {
+                fields.push(String::from_utf8_lossy(&field_buf[..bytes_written]).into_owned());
+                if record_end {
+                    break;
                 }
             }
-            c if c == delim_char && !in_quotes => {
-                fields.push(current_field.clone());
-                current_field.clear();
-            }
-            _ => {
-                current_field.push(ch);
-            }
+            csv_core::ReadFieldResult::OutputFull | csv_core::ReadFieldResult::End => break,
         }
     }
-
-    // Add the last field
-    fields.push(current_field);
 
     fields
 }
@@ -292,25 +306,13 @@ pub fn write_row_at_offset(
 
 /// Format a row for CSV output (with proper quoting)
 fn format_csv_row(fields: &[String], delimiter: u8) -> String {
-    let delim_char = delimiter as char;
+    let mut writer = WriterBuilder::new()
+        .delimiter(delimiter)
+        .from_writer(Vec::new());
 
-    let formatted_fields: Vec<String> = fields
-        .iter()
-        .map(|field| {
-            // Quote if field contains delimiter, quotes, or newlines
-            if field.contains(delim_char)
-                || field.contains('"')
-                || field.contains('\n')
-                || field.contains('\r')
-            {
-                format!("\"{}\"", field.replace('"', "\"\""))
-            } else {
-                field.clone()
-            }
-        })
-        .collect();
-
-    format!("{}\n", formatted_fields.join(&delim_char.to_string()))
+    writer.write_record(fields).expect("write to Vec cannot fail");
+    let bytes = writer.into_inner().expect("flush Vec cannot fail");
+    String::from_utf8(bytes).expect("csv output is valid UTF-8")
 }
 
 /// Detect image column by name pattern
@@ -336,18 +338,23 @@ pub fn detect_class_columns(headers: &[String]) -> Vec<usize> {
 /// Extract unique values from a specific column
 pub fn extract_unique_values(
     file_path: &Path,
-    offsets: &[u64],
+    _offsets: &[u64],
     column_index: usize,
     delimiter: u8,
 ) -> Result<Vec<String>, String> {
     let mut unique_values = std::collections::HashSet::new();
+    let file = File::open(file_path).map_err(|e| format!("Failed to open file: {}", e))?;
 
-    for &offset in offsets {
-        let fields = read_row_at_offset(file_path, offset, delimiter)?;
-        if column_index < fields.len() {
-            let value = fields[column_index].clone();
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(delimiter)
+        .has_headers(true)
+        .from_reader(BufReader::new(file));
+
+    for result in reader.records() {
+        let record = result.map_err(|e| format!("Failed to read record: {}", e))?;
+        if let Some(value) = record.get(column_index) {
             if !value.is_empty() {
-                unique_values.insert(value);
+                unique_values.insert(value.to_string());
             }
         }
     }
