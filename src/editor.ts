@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { RowData, CsvMetadata, ClassValuesMap } from './types';
 
 let currentMetadata: CsvMetadata | null = null;
@@ -150,7 +151,6 @@ async function addNewClassValue(columnIndex: number) {
     const trimmedValue = newValue.trim();
 
     try {
-        const { invoke } = await import('@tauri-apps/api/core');
         await invoke('add_class_value', {
             columnIndex,
             newValue: trimmedValue,
