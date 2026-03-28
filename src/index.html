@@ -52,7 +52,22 @@
               <span id="search-current">-</span>
               <button id="search-next-btn" class="btn btn-tiny" disabled>▶</button>
             </div>
+            <button id="advanced-toggle-btn" class="btn btn-small">Advanced</button>
           </div>
+        </div>
+
+        <div id="advanced-search-panel" class="advanced-search-panel" style="display: none;">
+          <div class="advanced-search-header">
+            <div class="logic-toggle">
+              <label><input type="radio" name="filter-logic" value="AND" checked /> AND</label>
+              <label><input type="radio" name="filter-logic" value="OR" /> OR</label>
+            </div>
+            <div class="advanced-search-actions">
+              <button id="add-filter-btn" class="btn btn-small">+ Add filter</button>
+              <button id="advanced-search-btn" class="btn btn-small btn-primary">🔍 Search</button>
+            </div>
+          </div>
+          <div id="filter-rows-container"></div>
         </div>
 
         <div class="main-content">

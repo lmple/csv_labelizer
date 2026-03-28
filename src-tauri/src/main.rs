@@ -23,6 +23,7 @@ fn main() {
             commands::set_image_column,
             commands::copy_and_save,
             commands::search_rows,
+            commands::advanced_search_rows,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

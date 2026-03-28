@@ -480,6 +480,84 @@ body {
   margin-left: 0.3rem;
 }
 
+/* Advanced Search Panel */
+.advanced-search-panel {
+  background-color: var(--bg-white);
+  padding: 0.75rem 2rem;
+  border-bottom: 1px solid var(--border-color);
+  box-shadow: var(--shadow);
+}
+
+.advanced-search-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.logic-toggle {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.logic-toggle label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.advanced-search-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.filter-row select {
+  padding: 0.4rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background-color: var(--bg-white);
+  max-width: 150px;
+}
+
+.filter-row input[type="text"] {
+  flex: 1;
+  padding: 0.4rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.filter-row .btn-remove-filter {
+  padding: 0.3rem 0.6rem;
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--danger-color);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.filter-row .btn-remove-filter:hover {
+  background-color: var(--danger-color);
+  color: white;
+  border-color: var(--danger-color);
+}
+
+#advanced-toggle-btn.active {
+  background-color: var(--primary-color);
+  color: white;
+}
+
 @media (max-width: 1024px) {
   .main-content {
     flex-direction: column;

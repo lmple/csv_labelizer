@@ -33,3 +33,16 @@ export interface RowData {
  * Map of class column indices to their unique values
  */
 export type ClassValuesMap = Record<number, string[]>;
+
+/**
+ * A single filter condition for advanced search
+ */
+export interface SearchFilter {
+  column_index: number;
+  query: string;
+}
+
+/**
+ * Logic operator for combining filters
+ */
+export type FilterLogic = 'AND' | 'OR';

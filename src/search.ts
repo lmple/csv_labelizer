@@ -1,9 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
-import { CsvMetadata } from './types';
+import { CsvMetadata, SearchFilter, FilterLogic } from './types';
 
 let searchResults: number[] = [];
 let currentSearchIndex: number = -1;
 let isSearchActive: boolean = false;
+
+let isAdvancedMode: boolean = false;
+let advancedFilters: SearchFilter[] = [];
+let filterLogic: FilterLogic = 'AND';
+let cachedHeaders: string[] = [];
+let jumpToRowCb: ((index: number) => void) | null = null;
 
 export function initializeSearch(metadata: CsvMetadata, jumpToRowCallback: (index: number) => void) {
     const searchInput = document.getElementById('search-input') as HTMLInputElement;
@@ -52,6 +58,42 @@ export function initializeSearch(metadata: CsvMetadata, jumpToRowCallback: (inde
             navigateSearchResults(1, jumpToRowCallback);
         });
     }
+
+    // Advanced search toggle
+    const advancedToggleBtn = document.getElementById('advanced-toggle-btn');
+    if (advancedToggleBtn) {
+        advancedToggleBtn.addEventListener('click', () => {
+            toggleAdvancedSearch();
+        });
+    }
+
+    // Add filter button
+    const addFilterBtn = document.getElementById('add-filter-btn');
+    if (addFilterBtn) {
+        addFilterBtn.addEventListener('click', () => {
+            addFilterRow();
+        });
+    }
+
+    // Advanced search button
+    const advancedSearchBtn = document.getElementById('advanced-search-btn');
+    if (advancedSearchBtn) {
+        advancedSearchBtn.addEventListener('click', async () => {
+            await performAdvancedSearch();
+        });
+    }
+
+    // Logic toggle radio buttons
+    const logicRadios = document.querySelectorAll('input[name="filter-logic"]');
+    logicRadios.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            filterLogic = (e.target as HTMLInputElement).value as FilterLogic;
+        });
+    });
+
+    // Store headers and callback for filter row creation
+    cachedHeaders = metadata.headers;
+    jumpToRowCb = jumpToRowCallback;
 }
 
 async function performSearch(
@@ -148,6 +190,136 @@ function updateSearchUI() {
     }
 }
 
+function toggleAdvancedSearch() {
+    isAdvancedMode = !isAdvancedMode;
+
+    const advancedPanel = document.getElementById('advanced-search-panel');
+    const toggleBtn = document.getElementById('advanced-toggle-btn');
+    const simpleSearchInput = document.getElementById('search-input') as HTMLInputElement;
+    const simpleSearchColumn = document.getElementById('search-column') as HTMLSelectElement;
+    const simpleSearchBtn = document.getElementById('search-btn');
+
+    if (isAdvancedMode) {
+        // Show advanced panel, disable simple search
+        if (advancedPanel) advancedPanel.style.display = 'block';
+        if (toggleBtn) toggleBtn.classList.add('active');
+        if (simpleSearchInput) simpleSearchInput.disabled = true;
+        if (simpleSearchColumn) simpleSearchColumn.disabled = true;
+        if (simpleSearchBtn) (simpleSearchBtn as HTMLButtonElement).disabled = true;
+
+        // Initialize with 2 empty filter rows
+        advancedFilters = [];
+        renderFilterRows();
+        addFilterRow();
+        addFilterRow();
+    } else {
+        // Hide advanced panel, re-enable simple search
+        if (advancedPanel) advancedPanel.style.display = 'none';
+        if (toggleBtn) toggleBtn.classList.remove('active');
+        if (simpleSearchInput) simpleSearchInput.disabled = false;
+        if (simpleSearchColumn) simpleSearchColumn.disabled = false;
+        if (simpleSearchBtn) (simpleSearchBtn as HTMLButtonElement).disabled = false;
+
+        advancedFilters = [];
+    }
+
+    // Clear results when switching modes
+    clearSearch();
+}
+
+function addFilterRow() {
+    advancedFilters.push({ column_index: 0, query: '' });
+    renderFilterRows();
+}
+
+function removeFilterRow(index: number) {
+    if (advancedFilters.length <= 1) return;
+    advancedFilters.splice(index, 1);
+    renderFilterRows();
+}
+
+function renderFilterRows() {
+    const container = document.getElementById('filter-rows-container');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    advancedFilters.forEach((filter, index) => {
+        const row = document.createElement('div');
+        row.className = 'filter-row';
+
+        const select = document.createElement('select');
+        cachedHeaders.forEach((header, colIdx) => {
+            const option = document.createElement('option');
+            option.value = colIdx.toString();
+            option.textContent = header;
+            if (colIdx === filter.column_index) option.selected = true;
+            select.appendChild(option);
+        });
+        select.addEventListener('change', () => {
+            advancedFilters[index].column_index = parseInt(select.value);
+        });
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = `Search in ${cachedHeaders[filter.column_index] || 'column'}...`;
+        input.value = filter.query;
+        input.addEventListener('input', () => {
+            advancedFilters[index].query = input.value;
+        });
+        input.addEventListener('keypress', async (e) => {
+            if (e.key === 'Enter') {
+                await performAdvancedSearch();
+            }
+        });
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'btn-remove-filter';
+        removeBtn.textContent = '×';
+        removeBtn.title = 'Remove filter';
+        removeBtn.addEventListener('click', () => {
+            removeFilterRow(index);
+        });
+
+        row.appendChild(select);
+        row.appendChild(input);
+        row.appendChild(removeBtn);
+        container.appendChild(row);
+    });
+}
+
+async function performAdvancedSearch() {
+    // Collect non-empty filters
+    const activeFilters = advancedFilters.filter(f => f.query.trim() !== '');
+
+    if (activeFilters.length === 0) {
+        showSearchToast('No search query');
+        clearSearch();
+        return;
+    }
+
+    try {
+        const results: number[] = await invoke('advanced_search_rows', {
+            filters: activeFilters,
+            logic: filterLogic,
+        });
+
+        searchResults = results;
+        currentSearchIndex = results.length > 0 ? 0 : -1;
+        isSearchActive = true;
+
+        updateSearchUI();
+        showSearchToast(`Found ${results.length} matching row(s)`);
+
+        if (results.length > 0 && jumpToRowCb) {
+            jumpToRowCb(results[0]);
+        }
+    } catch (error) {
+        console.error('Advanced search failed:', error);
+        alert(`Search failed: ${error}`);
+    }
+}
+
 function clearSearch() {
     searchResults = [];
     currentSearchIndex = -1;
@@ -176,6 +348,10 @@ function showSearchToast(message: string) {
 }
 
 export function clearSearchOnNewFile() {
+    // Reset to simple mode if in advanced
+    if (isAdvancedMode) {
+        toggleAdvancedSearch();
+    }
     clearSearch();
     const searchInput = document.getElementById('search-input') as HTMLInputElement;
     if (searchInput) {

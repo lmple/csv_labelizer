@@ -1,8 +1,23 @@
 use crate::csv_engine;
 use crate::state::{CsvMetadata, CsvState, RowData};
+use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::State;
+
+#[derive(Debug, Deserialize)]
+pub struct SearchFilter {
+    pub column_index: usize,
+    pub query: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub enum FilterLogic {
+    #[serde(rename = "AND")]
+    And,
+    #[serde(rename = "OR")]
+    Or,
+}
 
 #[tauri::command]
 pub fn open_csv(
@@ -347,4 +362,210 @@ pub fn search_rows(
     );
 
     Ok(matching_indices)
+}
+
+#[tauri::command]
+pub fn advanced_search_rows(
+    filters: Vec<SearchFilter>,
+    logic: FilterLogic,
+    state: State<Mutex<CsvState>>,
+) -> Result<Vec<usize>, String> {
+    let start_time = std::time::Instant::now();
+
+    let csv_state = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    let file_path = csv_state
+        .file_path
+        .as_ref()
+        .ok_or_else(|| "No CSV file opened".to_string())?;
+
+    let delimiter = csv_state.delimiter;
+
+    let matching_indices = execute_advanced_search(
+        file_path, &csv_state.offsets, delimiter, &filters, &logic,
+    )?;
+
+    let elapsed = start_time.elapsed();
+    println!(
+        "✓ advanced_search_rows ({:?}) found {} matches in {:.2}ms",
+        logic,
+        matching_indices.len(),
+        elapsed.as_secs_f64() * 1000.0
+    );
+
+    Ok(matching_indices)
+}
+
+/// Core search logic extracted for testability
+fn execute_advanced_search(
+    file_path: &std::path::Path,
+    offsets: &[u64],
+    delimiter: u8,
+    filters: &[SearchFilter],
+    logic: &FilterLogic,
+) -> Result<Vec<usize>, String> {
+    // Filter out empty queries
+    let active_filters: Vec<&SearchFilter> = filters
+        .iter()
+        .filter(|f| !f.query.trim().is_empty())
+        .collect();
+
+    if active_filters.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Pre-lowercase all queries
+    let lowered_queries: Vec<(usize, String)> = active_filters
+        .iter()
+        .map(|f| (f.column_index, f.query.to_lowercase()))
+        .collect();
+
+    let mut matching_indices = Vec::new();
+
+    for (row_idx, &offset) in offsets.iter().enumerate() {
+        let fields = csv_engine::read_row_at_offset(file_path, offset, delimiter)?;
+
+        let row_matches = match logic {
+            FilterLogic::And => lowered_queries.iter().all(|(col_idx, query_lower)| {
+                if *col_idx < fields.len() {
+                    fields[*col_idx].to_lowercase().contains(query_lower)
+                } else {
+                    false
+                }
+            }),
+            FilterLogic::Or => lowered_queries.iter().any(|(col_idx, query_lower)| {
+                if *col_idx < fields.len() {
+                    fields[*col_idx].to_lowercase().contains(query_lower)
+                } else {
+                    false
+                }
+            }),
+        };
+
+        if row_matches {
+            matching_indices.push(row_idx);
+        }
+    }
+
+    Ok(matching_indices)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn create_test_csv(content: &str) -> (tempfile::NamedTempFile, Vec<u64>, u8) {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write!(file, "{}", content).unwrap();
+        file.flush().unwrap();
+
+        let (offsets, delimiter, _headers) =
+            csv_engine::build_offset_index(file.path()).unwrap();
+        (file, offsets, delimiter)
+    }
+
+    #[test]
+    fn test_and_logic_two_filters() {
+        let csv = "Animal,Scene,Label\nCat,Indoor,good\nDog,Outdoor,bad\nCat,Outdoor,ok\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "Cat".into() },
+            SearchFilter { column_index: 1, query: "Indoor".into() },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
+        assert_eq!(result, vec![0]); // Only row 0: Cat,Indoor
+    }
+
+    #[test]
+    fn test_or_logic_two_filters() {
+        let csv = "Animal,Scene,Label\nCat,Indoor,good\nDog,Outdoor,bad\nBird,Indoor,ok\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "Cat".into() },
+            SearchFilter { column_index: 0, query: "Dog".into() },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::Or).unwrap();
+        assert_eq!(result, vec![0, 1]); // Cat and Dog rows
+    }
+
+    #[test]
+    fn test_empty_filters_ignored() {
+        let csv = "Animal,Scene\nCat,Indoor\nDog,Outdoor\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "Cat".into() },
+            SearchFilter { column_index: 1, query: "".into() },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
+        assert_eq!(result, vec![0]); // Empty filter ignored, only Cat filter applied
+    }
+
+    #[test]
+    fn test_all_empty_returns_empty() {
+        let csv = "Animal,Scene\nCat,Indoor\nDog,Outdoor\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "".into() },
+            SearchFilter { column_index: 1, query: "  ".into() },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_no_duplicate_rows_in_or() {
+        let csv = "Animal,Scene\nCat,Indoor\nDog,Outdoor\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        // Both filters match row 0
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "Cat".into() },
+            SearchFilter { column_index: 1, query: "Indoor".into() },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::Or).unwrap();
+        // Row 0 matches both but should appear only once
+        assert_eq!(result, vec![0]);
+    }
+
+    #[test]
+    fn test_case_insensitive() {
+        let csv = "Animal,Scene\nCat,Indoor\nDOG,OUTDOOR\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "dog".into() },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
+        assert_eq!(result, vec![1]);
+    }
+
+    #[test]
+    fn test_substring_matching() {
+        let csv = "Name,City\nAlbert,New York\nAlice,London\nBob,Albany\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "Al".into() },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
+        assert_eq!(result, vec![0, 1]); // Albert and Alice
+    }
+
+    #[test]
+    fn test_and_no_matches() {
+        let csv = "Animal,Scene\nCat,Indoor\nDog,Outdoor\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "Cat".into() },
+            SearchFilter { column_index: 1, query: "Outdoor".into() },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
+        assert!(result.is_empty()); // No row has Cat AND Outdoor
+    }
 }
