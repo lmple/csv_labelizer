@@ -1,9 +1,9 @@
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
 use std::time::Instant;
 
 // Import the modules we're testing
+#[allow(dead_code)]
 mod csv_engine {
     include!("../src/csv_engine.rs");
 }

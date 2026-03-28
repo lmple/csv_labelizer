@@ -1,13 +1,12 @@
 use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
-use std::sync::Mutex;
 
 // Import the modules we're testing
+#[allow(dead_code)]
 mod csv_engine {
     include!("../src/csv_engine.rs");
 }
 
+#[allow(dead_code)]
 mod state {
     include!("../src/state.rs");
 }
@@ -159,7 +158,7 @@ fn test_quoted_csv_handling() {
 
     fs::write(&csv_path, csv_content).unwrap();
 
-    let (offsets, delimiter, headers) = csv_engine::build_offset_index(&csv_path).unwrap();
+    let (offsets, delimiter, _headers) = csv_engine::build_offset_index(&csv_path).unwrap();
 
     // Read first row with comma in quoted field
     let row_0 = csv_engine::read_row_at_offset(&csv_path, offsets[0], delimiter).unwrap();

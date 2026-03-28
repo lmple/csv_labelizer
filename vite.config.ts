@@ -13,6 +13,6 @@ export default defineConfig({
   clearScreen: false,
   test: {
     globals: true,
-    include: ['../**/*.{test,spec}.{js,ts}'],
+    include: ['../tests/**/*.{test,spec}.{js,ts}'],
   },
 });
