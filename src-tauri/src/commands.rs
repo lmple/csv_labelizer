@@ -9,6 +9,8 @@ use tauri::State;
 pub struct SearchFilter {
     pub column_index: usize,
     pub query: String,
+    #[serde(default)]
+    pub exact: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -414,10 +416,10 @@ fn execute_advanced_search(
         return Ok(Vec::new());
     }
 
-    // Pre-lowercase all queries
-    let lowered_queries: Vec<(usize, String)> = active_filters
+    // Pre-process queries: lowercase and store exact flag
+    let prepared_queries: Vec<(usize, String, bool)> = active_filters
         .iter()
-        .map(|f| (f.column_index, f.query.to_lowercase()))
+        .map(|f| (f.column_index, f.query.trim().to_lowercase(), f.exact))
         .collect();
 
     let mut matching_indices = Vec::new();
@@ -425,20 +427,24 @@ fn execute_advanced_search(
     for (row_idx, &offset) in offsets.iter().enumerate() {
         let fields = csv_engine::read_row_at_offset(file_path, offset, delimiter)?;
 
+        let field_matches = |col_idx: &usize, query_lower: &str, exact: &bool| -> bool {
+            if *col_idx < fields.len() {
+                if *exact {
+                    fields[*col_idx].trim().to_lowercase() == *query_lower
+                } else {
+                    fields[*col_idx].to_lowercase().contains(query_lower)
+                }
+            } else {
+                false
+            }
+        };
+
         let row_matches = match logic {
-            FilterLogic::And => lowered_queries.iter().all(|(col_idx, query_lower)| {
-                if *col_idx < fields.len() {
-                    fields[*col_idx].to_lowercase().contains(query_lower)
-                } else {
-                    false
-                }
+            FilterLogic::And => prepared_queries.iter().all(|(col_idx, query_lower, exact)| {
+                field_matches(col_idx, query_lower, exact)
             }),
-            FilterLogic::Or => lowered_queries.iter().any(|(col_idx, query_lower)| {
-                if *col_idx < fields.len() {
-                    fields[*col_idx].to_lowercase().contains(query_lower)
-                } else {
-                    false
-                }
+            FilterLogic::Or => prepared_queries.iter().any(|(col_idx, query_lower, exact)| {
+                field_matches(col_idx, query_lower, exact)
             }),
         };
 
@@ -471,8 +477,8 @@ mod tests {
         let (file, offsets, delim) = create_test_csv(csv);
 
         let filters = vec![
-            SearchFilter { column_index: 0, query: "Cat".into() },
-            SearchFilter { column_index: 1, query: "Indoor".into() },
+            SearchFilter { column_index: 0, query: "Cat".into(), exact: false },
+            SearchFilter { column_index: 1, query: "Indoor".into(), exact: false },
         ];
         let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
         assert_eq!(result, vec![0]); // Only row 0: Cat,Indoor
@@ -484,8 +490,8 @@ mod tests {
         let (file, offsets, delim) = create_test_csv(csv);
 
         let filters = vec![
-            SearchFilter { column_index: 0, query: "Cat".into() },
-            SearchFilter { column_index: 0, query: "Dog".into() },
+            SearchFilter { column_index: 0, query: "Cat".into(), exact: false },
+            SearchFilter { column_index: 0, query: "Dog".into(), exact: false },
         ];
         let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::Or).unwrap();
         assert_eq!(result, vec![0, 1]); // Cat and Dog rows
@@ -497,8 +503,8 @@ mod tests {
         let (file, offsets, delim) = create_test_csv(csv);
 
         let filters = vec![
-            SearchFilter { column_index: 0, query: "Cat".into() },
-            SearchFilter { column_index: 1, query: "".into() },
+            SearchFilter { column_index: 0, query: "Cat".into(), exact: false },
+            SearchFilter { column_index: 1, query: "".into(), exact: false },
         ];
         let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
         assert_eq!(result, vec![0]); // Empty filter ignored, only Cat filter applied
@@ -510,8 +516,8 @@ mod tests {
         let (file, offsets, delim) = create_test_csv(csv);
 
         let filters = vec![
-            SearchFilter { column_index: 0, query: "".into() },
-            SearchFilter { column_index: 1, query: "  ".into() },
+            SearchFilter { column_index: 0, query: "".into(), exact: false },
+            SearchFilter { column_index: 1, query: "  ".into(), exact: false },
         ];
         let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
         assert!(result.is_empty());
@@ -524,8 +530,8 @@ mod tests {
 
         // Both filters match row 0
         let filters = vec![
-            SearchFilter { column_index: 0, query: "Cat".into() },
-            SearchFilter { column_index: 1, query: "Indoor".into() },
+            SearchFilter { column_index: 0, query: "Cat".into(), exact: false },
+            SearchFilter { column_index: 1, query: "Indoor".into(), exact: false },
         ];
         let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::Or).unwrap();
         // Row 0 matches both but should appear only once
@@ -538,7 +544,7 @@ mod tests {
         let (file, offsets, delim) = create_test_csv(csv);
 
         let filters = vec![
-            SearchFilter { column_index: 0, query: "dog".into() },
+            SearchFilter { column_index: 0, query: "dog".into(), exact: false },
         ];
         let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
         assert_eq!(result, vec![1]);
@@ -550,7 +556,7 @@ mod tests {
         let (file, offsets, delim) = create_test_csv(csv);
 
         let filters = vec![
-            SearchFilter { column_index: 0, query: "Al".into() },
+            SearchFilter { column_index: 0, query: "Al".into(), exact: false },
         ];
         let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
         assert_eq!(result, vec![0, 1]); // Albert and Alice
@@ -562,10 +568,97 @@ mod tests {
         let (file, offsets, delim) = create_test_csv(csv);
 
         let filters = vec![
-            SearchFilter { column_index: 0, query: "Cat".into() },
-            SearchFilter { column_index: 1, query: "Outdoor".into() },
+            SearchFilter { column_index: 0, query: "Cat".into(), exact: false },
+            SearchFilter { column_index: 1, query: "Outdoor".into(), exact: false },
         ];
         let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
         assert!(result.is_empty()); // No row has Cat AND Outdoor
+    }
+
+    #[test]
+    fn test_exact_match_single_filter() {
+        let csv = "Animal,Scene\nCat,Indoor\nCatfish,Outdoor\nmy cat,Park\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "Cat".into(), exact: true },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
+        assert_eq!(result, vec![0]); // Only "Cat", not "Catfish" or "my cat"
+    }
+
+    #[test]
+    fn test_exact_match_case_insensitive() {
+        let csv = "Animal,Scene\ncat,Indoor\nCAT,Outdoor\nCat,Park\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "Cat".into(), exact: true },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
+        assert_eq!(result, vec![0, 1, 2]); // All three match case-insensitively
+    }
+
+    #[test]
+    fn test_exact_match_whitespace_trimmed() {
+        let csv = "Animal,Scene\n cat ,Indoor\n  Cat  ,Outdoor\nCat,Park\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "cat".into(), exact: true },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
+        assert_eq!(result, vec![0, 1, 2]); // All match after trimming
+    }
+
+    #[test]
+    fn test_exact_false_is_substring() {
+        let csv = "Animal,Scene\nCatfish,Indoor\nCat,Outdoor\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "Cat".into(), exact: false },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
+        assert_eq!(result, vec![0, 1]); // Both match via substring
+    }
+
+    #[test]
+    fn test_exact_match_empty_query_ignored() {
+        let csv = "Animal,Scene\nCat,Indoor\nDog,Outdoor\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "".into(), exact: true },
+            SearchFilter { column_index: 1, query: "Indoor".into(), exact: false },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
+        assert_eq!(result, vec![0]); // Empty exact filter ignored, only Indoor filter applied
+    }
+
+    #[test]
+    fn test_mixed_exact_and_substring_and_logic() {
+        let csv = "Status,Notes\nActive,needs review\nActive,done\nActivated,needs review\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "Active".into(), exact: true },
+            SearchFilter { column_index: 1, query: "review".into(), exact: false },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::And).unwrap();
+        assert_eq!(result, vec![0]); // Only row 0: Status exactly "Active" AND Notes contains "review"
+    }
+
+    #[test]
+    fn test_mixed_exact_and_substring_or_logic() {
+        let csv = "Status,Notes\nDone,needs review\nPending,done\nPending review,notes\n";
+        let (file, offsets, delim) = create_test_csv(csv);
+
+        let filters = vec![
+            SearchFilter { column_index: 0, query: "Done".into(), exact: true },
+            SearchFilter { column_index: 0, query: "Pend".into(), exact: false },
+        ];
+        let result = execute_advanced_search(file.path(), &offsets, delim, &filters, &FilterLogic::Or).unwrap();
+        assert_eq!(result, vec![0, 1, 2]); // Row 0: exact "Done", Rows 1-2: contain "Pend"
     }
 }

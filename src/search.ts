@@ -228,7 +228,7 @@ function toggleAdvancedSearch() {
 }
 
 function addFilterRow() {
-    advancedFilters.push({ column_index: 0, query: '' });
+    advancedFilters.push({ column_index: 0, query: '', exact: false });
     renderFilterRows();
 }
 
@@ -273,6 +273,18 @@ function renderFilterRows() {
             }
         });
 
+        const exactBtn = document.createElement('button');
+        exactBtn.className = 'btn-exact-filter' + (filter.exact ? ' active' : '');
+        exactBtn.textContent = '=';
+        exactBtn.title = filter.exact ? 'Exact match (click to switch to contains)' : 'Contains match (click to switch to exact)';
+        exactBtn.addEventListener('click', () => {
+            advancedFilters[index].exact = !advancedFilters[index].exact;
+            exactBtn.classList.toggle('active');
+            exactBtn.title = advancedFilters[index].exact
+                ? 'Exact match (click to switch to contains)'
+                : 'Contains match (click to switch to exact)';
+        });
+
         const removeBtn = document.createElement('button');
         removeBtn.className = 'btn-remove-filter';
         removeBtn.textContent = '×';
@@ -283,6 +295,7 @@ function renderFilterRows() {
 
         row.appendChild(select);
         row.appendChild(input);
+        row.appendChild(exactBtn);
         row.appendChild(removeBtn);
         container.appendChild(row);
     });
