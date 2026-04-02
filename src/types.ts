@@ -40,6 +40,7 @@ export type ClassValuesMap = Record<number, string[]>;
 export interface SearchFilter {
   column_index: number;
   query: string;
+  exact: boolean;
 }
 
 /**
